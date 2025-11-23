@@ -1,139 +1,102 @@
-// ==========================
-// FB GROUP NAME LOCK (2025)
-// By RAJ MISHRA 🔥
-// ==========================
+// npm install express body-parser fca-mafiya fs path
 
 const express = require("express");
+const bodyParser = require("body-parser");
 const fs = require("fs");
 const path = require("path");
-const bodyParser = require("body-parser");
-const axios = require("axios");
-const cookieParser = require("cookie");
-const mafia = require("fca-mafiya");
+const login = require("fca-mafiya");
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
+app.use(express.static("public"));
 
-let botRunning = false;
-let intervalID = null;
+// ---- GLOBAL TASK ----
 let api = null;
+let running = false;
 
-// =========================
-// AUTO HTML UI
-// =========================
-app.get("/", (req, res) => {
-    res.send(`
-        <html>
-        <head>
-            <title>FB Group Name Lock by Raj Mishra</title>
-            <style>
-                body { font-family: Arial; background: #111; color: #fff; padding: 20px; }
-                input, textarea { width: 100%; padding: 10px; margin: 10px 0; border-radius: 5px; }
-                button { padding: 10px 20px; background: #00ff99; border: none; border-radius: 5px; }
-            </style>
-        </head>
-        <body>
-            <h2>🔥 FB Group Name Change + Auto Lock (60 Seconds) 🔥</h2>
-
-            <form action="/start" method="POST">
-                <label>Enter Cookies (Raw or JSON):</label>
-                <textarea name="cookies" rows="5" required></textarea>
-
-                <label>Thread ID (Group ID):</label>
-                <input name="threadID" required>
-
-                <label>New Group Name:</label>
-                <input name="groupName" required>
-
-                <button type="submit">🚀 START LOCK</button>
-            </form>
-
-            <br><br>
-
-            <form action="/stop" method="POST">
-                <button type="submit" style="background:red;">🛑 STOP LOCK</button>
-            </form>
-        </body>
-        </html>
-    `);
-});
-
-// =========================
-// PARSE RAW OR JSON COOKIES
-// =========================
-function convertCookies(input) {
+// ---- START BOT ----
+app.post("/start", async (req, res) => {
     try {
-        if (input.trim().startsWith("[")) {
-            return JSON.parse(input);
-        }
+        let cookiesRaw = req.body.cookies.trim();
+        let threadID = req.body.groupid.trim();
+        let prefix = req.body.prefix.trim();
+        let delay = parseInt(req.body.delay.trim()) * 1000;
 
-        let raw = input.split(";").map(x => x.trim());
-        return raw.map(c => {
-            let [key, ...v] = c.split("=");
-            return { key, value: v.join("=") };
+        // Convert cookies (RAW → JSON)
+        let cookies = cookiesRaw.split(";").map(a => {
+            let parts = a.trim().split("=");
+            return {
+                key: parts[0],
+                value: parts[1] || "",
+                domain: "facebook.com",
+                path: "/"
+            };
         });
 
-    } catch {
-        return null;
+        // Save appstate.json
+        fs.writeFileSync("appstate.json", JSON.stringify(cookies, null, 2));
+
+        // LOGIN
+        login({ appState: cookies }, (err, fbApi) => {
+            if (err) return res.send("Cookies Error ❌");
+
+            api = fbApi;
+            running = true;
+
+            res.send("Bot Started Successfully! ✔");
+
+            startLoop(api, threadID, prefix, delay);
+        });
+
+    } catch (e) {
+        res.send("Server Error ❌");
+    }
+});
+
+// ---- INFINITE LOOP + AUTO-RECONNECT ----
+async function startLoop(api, threadID, prefix, delay) {
+    let messages = fs.readFileSync("messages.txt", "utf8").split("\n").filter(Boolean);
+
+    let index = 0;
+
+    while (running) {
+        try {
+            let msg = `${prefix} ${messages[index]}`;
+
+            api.sendMessage(msg, threadID, (err) => {
+                if (err) console.log("Send Error → Reconnecting…");
+
+            });
+
+            console.log("Sent:", msg);
+
+            index = (index + 1) % messages.length;
+
+            await sleep(delay);
+
+        } catch (err) {
+            console.log("💀 Error detected → Auto Restarting...");
+            await restartSession();
+        }
     }
 }
 
-// =========================
-// START BOT
-// =========================
-app.post("/start", async (req, res) => {
-    if (botRunning) return res.send("Bot already running!");
+// --- Sleep helper ---
+function sleep(ms) {
+    return new Promise(res => setTimeout(res, ms));
+}
 
-    let rawCookies = req.body.cookies;
-    let threadID = req.body.threadID;
-    let setName = req.body.groupName;
-
-    let cookies = convertCookies(rawCookies);
-
-    if (!cookies) return res.send("Invalid cookies!");
-
-    fs.writeFileSync("appstate.json", JSON.stringify(cookies, null, 2));
-
-    mafia({ appState: cookies }, async (err, fbAPI) => {
-        if (err) return res.send("Login Failed: " + err);
-
-        api = fbAPI;
-        botRunning = true;
-
-        // RUN EVERY 60 SECONDS
-        intervalID = setInterval(async () => {
-            try {
-                let info = await api.getThreadInfo(threadID);
-
-                if (info.threadName !== setName) {
-                    await api.setTitle(setName, threadID);
-                }
-
-            } catch (e) {
-                console.log("Error:", e);
+// --- AUTO-RECONNECT ---
+async function restartSession() {
+    return new Promise((resolve) => {
+        login({ appState: JSON.parse(fs.readFileSync("appstate.json")) }, (err, fbApi) => {
+            if (!err) {
+                api = fbApi;
+                console.log("🔥 Auto Reconnected");
             }
-        }, 60 * 1000);
-
-        res.send("🔥 Group Name Auto-Lock ACTIVATED (Every 60 Seconds)");
+            resolve();
+        });
     });
-});
+}
 
-// =========================
-// STOP BOT
-// =========================
-app.post("/stop", (req, res) => {
-    if (!botRunning) return res.send("Bot not running.");
-
-    clearInterval(intervalID);
-    botRunning = false;
-    api = null;
-
-    res.send("🛑 Bot Stopped Successfully");
-});
-
-// =========================
-// PORT FOR RENDER
-// =========================
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("Server running on PORT " + PORT));
+app.listen(3000, () => console.log("Server Running on 3000"));
