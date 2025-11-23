@@ -1,18 +1,18 @@
 {
-  "name": "fb-msg-engine",
+  "name": "fb-group-sender",
   "version": "1.0.0",
-  "description": "Facebook Cookies Message Sender with WebSocket Logs + Infinite Loop",
+  "description": "Facebook Non-E2EE Group Message Sender with Raw Cookie Login, WebSocket Logs & Session Engine",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "axios": "^1.6.8",
-    "express": "^4.18.2",
-    "ws": "^8.16.0",
-    "uuid": "^9.0.1",
-    "fca-mafiya": "latest",
+    "axios": "^1.7.2",
     "body-parser": "^1.20.2",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "fca-mafiya": "latest",
+    "uuid": "^9.0.1",
+    "ws": "^8.15.1"
   }
 }
