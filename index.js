@@ -1,201 +1,144 @@
-// npm install express body-parser fca-mafiya uuid ws fs
+// SERVER.JS — RAW COOKIE SUPPORT + WORKING LOGIN + LOOP + SESSION ENGINE
 
 const express = require("express");
-const bodyParser = require("body-parser");
+const axios = require("axios");
 const fs = require("fs");
-const login = require("fca-mafiya");
 const { v4: uuidv4 } = require("uuid");
 const WebSocket = require("ws");
+const login = require("fca-mafiya");
+const bodyParser = require("body-parser");
+const cors = require("cors");
 
 const app = express();
-app.use(bodyParser.urlencoded({ extended: true }));
+const PORT = process.env.PORT || 3000;
 
-// ------------ SESSION STORE ----------------
-let sessions = {};  
-// { sessionID: { api, running, threadID, prefix, delay, messages, cookies, ws } }
+app.use(bodyParser.json());
+app.use(cors());
+app.use(express.static("public"));
 
-// ------------ WEBSOCKET SERVER ------------
+let sessions = {};
 const wss = new WebSocket.Server({ noServer: true });
 
-function sendWS(sid, text) {
-    if (sessions[sid] && sessions[sid].ws && sessions[sid].ws.readyState === 1) {
-        sessions[sid].ws.send(text);
+// RAW COOKIE ➜ JSON appState CONVERTER
+function rawToAppState(raw) {
+    return raw.split(";").map(c => {
+        let [key, ...val] = c.trim().split("=");
+        return {
+            key: key,
+            value: val.join("="),
+            domain: "facebook.com",
+            path: "/",
+            hostOnly: false
+        };
+    });
+}
+
+// WebSocket log function
+function sendLog(sessionId, msg) {
+    if (sessions[sessionId] && sessions[sessionId].ws) {
+        sessions[sessionId].ws.send(JSON.stringify({ log: msg }));
     }
 }
 
-// ------------ HTML UI ------------
-app.get("/", (req, res) => {
-    res.send(`
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Non-E2EE Sender Panel</title>
-</head>
-<body style="font-family:Arial;background:#000;color:#0f0;padding:20px;">
+// WebSocket upgrade
+const server = app.listen(PORT, () =>
+    console.log("SERVER RUNNING ON PORT " + PORT)
+);
 
-<h2>🔥 Non-E2EE Group Message Sender + LIVE Log 🔥</h2>
-
-<form action="/start" method="post">
-    <label>RAW Cookies:</label><br>
-    <textarea name="cookies" rows="5" style="width:100%;"></textarea><br><br>
-
-    <label>Group Thread ID:</label><br>
-    <input name="groupid" style="width:100%;"><br><br>
-
-    <label>Prefix:</label><br>
-    <input name="prefix" style="width:100%;"><br><br>
-
-    <label>Messages (line by line):</label><br>
-    <textarea name="messages" rows="5" style="width:100%;"></textarea><br><br>
-
-    <label>Delay (seconds):</label><br>
-    <input name="delay" type="number" value="5" style="width:100%;"><br><br>
-
-    <button type="submit" style="padding:10px;width:100%;font-size:18px;">Start</button>
-</form>
-
-<hr>
-<h3>Session Live Logs</h3>
-<input id="sid" placeholder="Session ID" style="width:100%;"><br><br>
-<button onclick="connectWS()" style="padding:10px;width:100%;">Connect Logs</button>
-
-<pre id="log" style="background:#111;color:#0f0;padding:10px;height:300px;overflow-y:scroll;"></pre>
-
-<script>
-let ws;
-
-function connectWS(){
-    let id = document.getElementById("sid").value.trim();
-    if(!id) return alert("Enter Session ID");
-
-    ws = new WebSocket("ws://" + location.host + "/ws/" + id);
-
-    ws.onmessage = (msg)=>{
-        let log = document.getElementById("log");
-        log.textContent += msg.data + "\\n";
-        log.scrollTop = log.scrollHeight;
-    };
-}
-</script>
-
-</body>
-</html>
-    `);
-});
-
-// ------------ WEBSOCKET UPGRADE ------------
-app.server = app.listen(3000, () => console.log("SERVER RUNNING ON PORT 3000"));
-
-app.server.on("upgrade", (req, socket, head) => {
-    const url = req.url.split("/");
-    const sid = url[url.length - 1];
-
-    wss.handleUpgrade(req, socket, head, function (ws) {
-        sessions[sid] = sessions[sid] || {};
-        sessions[sid].ws = ws;
-
-        ws.send("🔗 Connected to Session Log: " + sid);
+server.on("upgrade", (req, socket, head) => {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+        ws.send(JSON.stringify({ log: "WebSocket Connected!" }));
     });
 });
 
-
-// ------------ START BOT ------------
-app.post("/start", (req, res) => {
+// -----------------------------------------------------
+// CREATE NEW SESSION
+// -----------------------------------------------------
+app.post("/create-session", async (req, res) => {
     try {
-        const cookiesRaw = req.body.cookies.trim();
-        const threadID = req.body.groupid.trim();
-        const prefix = req.body.prefix.trim();
-        const delay = parseInt(req.body.delay.trim()) * 1000;
-        const messages = req.body.messages.split("\n").map(m => m.trim()).filter(Boolean);
+        let rawCookies = req.body.cookies; // RAW STRING
+        let groupId = req.body.group;
+        let prefix = req.body.prefix;
+        let messageFile = req.body.message;
+        let delay = req.body.delay || 10;
 
-        if (!messages.length) return res.send("❌ No message entered");
+        let sessionId = uuidv4();
 
-        let cookies = cookiesRaw.split(";").map(a => {
-            let p = a.trim().split("=");
-            return { key: p[0], value: p[1] || "", domain: "facebook.com", path: "/" };
-        });
+        sendLog(sessionId, "⏳ Converting Cookies...");
 
-        const sid = uuidv4();
-        console.log("SESSION START:", sid);
+        let appState = rawToAppState(rawCookies);
 
-        login({ appState: cookies }, (err, api) => {
-            if (err) return res.send("❌ Cookies Invalid");
+        sendLog(sessionId, "🍪 Cookie converted ✔");
 
-            sessions[sid] = {
+        login({ appState }, async (err, api) => {
+            if (err) {
+                sendLog(sessionId, "❌ Login failed");
+                return res.json({ error: err.toString() });
+            }
+
+            sendLog(sessionId, "🔥 LOGIN SUCCESSFUL!");
+
+            sessions[sessionId] = {
+                id: sessionId,
                 api,
-                running: true,
-                threadID,
+                groupId,
                 prefix,
+                messageFile,
                 delay,
-                messages,
-                cookies,
+                running: true,
                 ws: null
             };
 
-            startLoop(sid);
+            loopSend(sessionId);
 
-            res.send(`<h2>Session Started ✔</h2><p><b>SESSION ID:</b> ${sid}</p>`);
+            res.json({ success: true, sessionId });
         });
 
     } catch (err) {
-        res.send("❌ Server Error");
+        res.json({ error: "Server crashed", detail: err.toString() });
     }
 });
 
-// ------------ MAIN LOOP (INFINITE) ------------
-async function startLoop(sid) {
-    let s = sessions[sid];
+// -----------------------------------------------------
+// INFINITE LOOP MESSAGE SENDER
+// -----------------------------------------------------
+async function loopSend(sessionId) {
+    let s = sessions[sessionId];
     if (!s) return;
 
-    let i = 0;
+    const api = s.api;
 
-    while (sessions[sid] && sessions[sid].running) {
+    while (s.running) {
         try {
-            let msg = `${s.prefix} ${s.messages[i]}`;
+            sendLog(sessionId, "⌨ Typing...");
+            api.sendTypingIndicator(s.groupId);
 
-            // TYPING INDICATOR
-            s.api.sendTypingIndicator(s.threadID, (err) => { });
+            let finalMessage = `${s.prefix} ${s.messageFile}`;
+            sendLog(sessionId, "📤 Sending → " + finalMessage);
 
-            sendWS(sid, `⌛ Typing... (${s.messages[i]})`);
-
-            await sleep(1500);
-
-            s.api.sendMessage(msg, s.threadID, (err, info) => {
-                if (err) {
-                    sendWS(sid, "❌ ERROR sending message → Reconnect triggered");
-                    return;
-                }
-
-                sendWS(sid, `✔ SENT: ${msg}`);
+            api.sendMessage(finalMessage, s.groupId, (err) => {
+                if (err) sendLog(sessionId, "❌ ERROR: " + err.toString());
+                else sendLog(sessionId, "✅ Message Sent!");
             });
 
-            i = (i + 1) % s.messages.length;
-
-            await sleep(s.delay);
+            await new Promise(r => setTimeout(r, s.delay * 1000));
 
         } catch (e) {
-            sendWS(sid, "💀 ERROR detected → Auto reconnecting...");
-            await reconnect(sid);
+            sendLog(sessionId, "❌ Loop crashed: " + e);
         }
     }
 }
 
-// ------------ AUTO RECONNECT ------------
-async function reconnect(sid) {
-    return new Promise((resolve) => {
-        let s = sessions[sid];
-        if (!s) return resolve();
+// STOP SESSION
+app.post("/stop-session", (req, res) => {
+    let id = req.body.sessionId;
+    if (sessions[id]) sessions[id].running = false;
+    res.json({ success: true });
+});
 
-        login({ appState: s.cookies }, (err, api) => {
-            if (!err) {
-                s.api = api;
-                sendWS(sid, "🔥 Reconnected Successfully");
-            }
-            resolve();
-        });
-    });
-}
-
-function sleep(ms) {
-    return new Promise(r => setTimeout(r, ms));
-}
+// DELETE SESSION
+app.post("/delete-session", (req, res) => {
+    let id = req.body.sessionId;
+    if (sessions[id]) delete sessions[id];
+    res.json({ success: true });
+});
