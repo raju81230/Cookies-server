@@ -1,15 +1,18 @@
 {
-  "name": "non-e2ee-sender",
+  "name": "fb-msg-engine",
   "version": "1.0.0",
+  "description": "Facebook Cookies Message Sender with WebSocket Logs + Infinite Loop",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "body-parser": "^1.20.2",
-    "express": "^4.18.3",
+    "axios": "^1.6.8",
+    "express": "^4.18.2",
+    "ws": "^8.16.0",
+    "uuid": "^9.0.1",
     "fca-mafiya": "latest",
-    "fs": "0.0.1-security",
-    "path": "^0.12.7"
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5"
   }
 }
