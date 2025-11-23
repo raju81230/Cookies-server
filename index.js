@@ -1,144 +1,90 @@
-// SERVER.JS — RAW COOKIE SUPPORT + WORKING LOGIN + LOOP + SESSION ENGINE
+// ====== Facebook Cookies Message Sender (Render Deploy Ready) ======
+// npm install express axios fca-mafiya body-parser
 
 const express = require("express");
-const axios = require("axios");
-const fs = require("fs");
-const { v4: uuidv4 } = require("uuid");
-const WebSocket = require("ws");
-const login = require("fca-mafiya");
 const bodyParser = require("body-parser");
-const cors = require("cors");
+const axios = require("axios");
+const login = require("fca-mafiya");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
 app.use(bodyParser.json());
-app.use(cors());
-app.use(express.static("public"));
+app.use(bodyParser.urlencoded({ extended: true }));
 
-let sessions = {};
-const wss = new WebSocket.Server({ noServer: true });
+let api = null; // Global API instance
 
-// RAW COOKIE ➜ JSON appState CONVERTER
-function rawToAppState(raw) {
-    return raw.split(";").map(c => {
-        let [key, ...val] = c.trim().split("=");
-        return {
-            key: key,
-            value: val.join("="),
-            domain: "facebook.com",
-            path: "/",
-            hostOnly: false
-        };
-    });
-}
-
-// WebSocket log function
-function sendLog(sessionId, msg) {
-    if (sessions[sessionId] && sessions[sessionId].ws) {
-        sessions[sessionId].ws.send(JSON.stringify({ log: msg }));
-    }
-}
-
-// WebSocket upgrade
-const server = app.listen(PORT, () =>
-    console.log("SERVER RUNNING ON PORT " + PORT)
-);
-
-server.on("upgrade", (req, socket, head) => {
-    wss.handleUpgrade(req, socket, head, (ws) => {
-        ws.send(JSON.stringify({ log: "WebSocket Connected!" }));
-    });
-});
-
-// -----------------------------------------------------
-// CREATE NEW SESSION
-// -----------------------------------------------------
-app.post("/create-session", async (req, res) => {
+// ---------- LOGIN USING COOKIES ----------
+app.post("/login", async (req, res) => {
     try {
-        let rawCookies = req.body.cookies; // RAW STRING
-        let groupId = req.body.group;
-        let prefix = req.body.prefix;
-        let messageFile = req.body.message;
-        let delay = req.body.delay || 10;
+        const rawCookies = req.body.cookies;
 
-        let sessionId = uuidv4();
+        if (!rawCookies) {
+            return res.json({ status: false, message: "Cookies missing" });
+        }
 
-        sendLog(sessionId, "⏳ Converting Cookies...");
+        // Convert to cookie object for fca-mafiya
+        let cookieArr = rawCookies.split(";").map(c => c.trim());
 
-        let appState = rawToAppState(rawCookies);
-
-        sendLog(sessionId, "🍪 Cookie converted ✔");
-
-        login({ appState }, async (err, api) => {
-            if (err) {
-                sendLog(sessionId, "❌ Login failed");
-                return res.json({ error: err.toString() });
-            }
-
-            sendLog(sessionId, "🔥 LOGIN SUCCESSFUL!");
-
-            sessions[sessionId] = {
-                id: sessionId,
-                api,
-                groupId,
-                prefix,
-                messageFile,
-                delay,
-                running: true,
-                ws: null
-            };
-
-            loopSend(sessionId);
-
-            res.json({ success: true, sessionId });
+        let formatted = cookieArr.map(c => {
+            const [key, value] = c.split("=");
+            return { key: key.trim(), value: value.trim(), domain: "facebook.com", path: "/" };
         });
 
-    } catch (err) {
-        res.json({ error: "Server crashed", detail: err.toString() });
-    }
-});
+        login({ appState: formatted }, (err, fbApi) => {
+            if (err) return res.json({ status: false, message: "Invalid Cookies", error: err });
 
-// -----------------------------------------------------
-// INFINITE LOOP MESSAGE SENDER
-// -----------------------------------------------------
-async function loopSend(sessionId) {
-    let s = sessions[sessionId];
-    if (!s) return;
-
-    const api = s.api;
-
-    while (s.running) {
-        try {
-            sendLog(sessionId, "⌨ Typing...");
-            api.sendTypingIndicator(s.groupId);
-
-            let finalMessage = `${s.prefix} ${s.messageFile}`;
-            sendLog(sessionId, "📤 Sending → " + finalMessage);
-
-            api.sendMessage(finalMessage, s.groupId, (err) => {
-                if (err) sendLog(sessionId, "❌ ERROR: " + err.toString());
-                else sendLog(sessionId, "✅ Message Sent!");
+            api = fbApi;
+            api.setOptions({
+                listenEvents: false,
+                selfListen: false,
+                logLevel: "silent",
             });
 
-            await new Promise(r => setTimeout(r, s.delay * 1000));
+            return res.json({ status: true, message: "Login Successful!" });
+        });
 
-        } catch (e) {
-            sendLog(sessionId, "❌ Loop crashed: " + e);
-        }
+    } catch (e) {
+        res.json({ status: false, message: "Unexpected error", error: e });
     }
-}
-
-// STOP SESSION
-app.post("/stop-session", (req, res) => {
-    let id = req.body.sessionId;
-    if (sessions[id]) sessions[id].running = false;
-    res.json({ success: true });
 });
 
-// DELETE SESSION
-app.post("/delete-session", (req, res) => {
-    let id = req.body.sessionId;
-    if (sessions[id]) delete sessions[id];
-    res.json({ success: true });
+// ---------- SEND MESSAGE ----------
+app.post("/send", async (req, res) => {
+    try {
+        if (!api) return res.json({ status: false, message: "Bot not logged in" });
+
+        const threadID = req.body.threadID;
+        const message = req.body.message;
+
+        if (!threadID || !message) {
+            return res.json({ status: false, message: "Missing threadID or message" });
+        }
+
+        api.sendMessage(message, threadID, (err) => {
+            if (err) return res.json({ status: false, message: "Failed", error: err });
+            return res.json({ status: true, message: "Message Sent!" });
+        });
+
+    } catch (e) {
+        res.json({ status: false, message: "Send Error", error: e });
+    }
 });
+
+// ---------- HOME ----------
+app.get("/", (req, res) => {
+    res.send(`
+        <h1>🔥 Facebook Cookies Message Sender (Render Version) 🔥</h1>
+        <form method="POST" action="/login">
+            <textarea name="cookies" placeholder="Paste Facebook Cookies" style="width:300px;height:120px;"></textarea><br>
+            <button type="submit">Login</button>
+        </form>
+        <hr>
+        <form method="POST" action="/send">
+            <input name="threadID" placeholder="Thread ID"><br><br>
+            <input name="message" placeholder="Message"><br><br>
+            <button type="submit">Send Message</button>
+        </form>
+    `);
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log("Server running on PORT " + PORT));
