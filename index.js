@@ -1,92 +1,139 @@
-const axios = require("axios");
-const { CookieJar } = require("tough-cookie");
+// ==========================
+// FB GROUP NAME LOCK (2025)
+// By RAJ MISHRA 🔥
+// ==========================
+
+const express = require("express");
 const fs = require("fs");
+const path = require("path");
+const bodyParser = require("body-parser");
+const axios = require("axios");
+const cookieParser = require("cookie");
+const mafia = require("fca-mafiya");
 
-// Load config.json
-const config = JSON.parse(fs.readFileSync("config.json", "utf8"));
-const cookies = config.cookies;
-const threadID = config.threadID;
-const messageText = config.message;
+const app = express();
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.json());
 
-// Random delay
-function delay(ms) {
-    return new Promise(res => setTimeout(res, ms));
-}
+let botRunning = false;
+let intervalID = null;
+let api = null;
 
-async function sendMessage(cookies, threadID, message) {
+// =========================
+// AUTO HTML UI
+// =========================
+app.get("/", (req, res) => {
+    res.send(`
+        <html>
+        <head>
+            <title>FB Group Name Lock by Raj Mishra</title>
+            <style>
+                body { font-family: Arial; background: #111; color: #fff; padding: 20px; }
+                input, textarea { width: 100%; padding: 10px; margin: 10px 0; border-radius: 5px; }
+                button { padding: 10px 20px; background: #00ff99; border: none; border-radius: 5px; }
+            </style>
+        </head>
+        <body>
+            <h2>🔥 FB Group Name Change + Auto Lock (60 Seconds) 🔥</h2>
+
+            <form action="/start" method="POST">
+                <label>Enter Cookies (Raw or JSON):</label>
+                <textarea name="cookies" rows="5" required></textarea>
+
+                <label>Thread ID (Group ID):</label>
+                <input name="threadID" required>
+
+                <label>New Group Name:</label>
+                <input name="groupName" required>
+
+                <button type="submit">🚀 START LOCK</button>
+            </form>
+
+            <br><br>
+
+            <form action="/stop" method="POST">
+                <button type="submit" style="background:red;">🛑 STOP LOCK</button>
+            </form>
+        </body>
+        </html>
+    `);
+});
+
+// =========================
+// PARSE RAW OR JSON COOKIES
+// =========================
+function convertCookies(input) {
     try {
-        const jar = new CookieJar();
-        cookies.split(";").forEach(c => {
-            jar.setCookieSync(c.trim(), "https://www.facebook.com");
-            jar.setCookieSync(c.trim(), "https://m.facebook.com");
-        });
-
-        const client = axios.create({
-            baseURL: "https://www.facebook.com",
-            jar,
-            withCredentials: true,
-            headers: { "User-Agent": "Mozilla/5.0 (Android 10)" },
-            validateStatus: () => true
-        });
-
-        const home = await client.get("/messages/t/");
-        const fb_dtsg = home.data.match(/"token":"(.*?)"/)?.[1];
-        const jazoest = home.data.match(/"jazoest":"(\d+)"/)?.[1];
-
-        if (!fb_dtsg || !jazoest) {
-            console.log("❌ Cookies invalid.");
-            return false;
+        if (input.trim().startsWith("[")) {
+            return JSON.parse(input);
         }
 
-        const clientID = Math.floor(Math.random() * 9999999999);
-
-        const data = new URLSearchParams();
-        data.append("fb_dtsg", fb_dtsg);
-        data.append("jazoest", jazoest);
-        data.append("body", message);
-        data.append("send_type", "SENT");
-        data.append("tids", `cid.g.${threadID}`);
-        data.append("wwwupp", "C3");
-        data.append("client", "mercury");
-        data.append("action_type", "ma-type:user-generated-message");
-        data.append("timestamp", Date.now());
-        data.append("source", "source:chat:web");
-        data.append("client_id", clientID);
-        data.append("ephemeral_ttl_mode", "0");
-
-        const res = await client.post("/messaging/send/", data.toString(), {
-            headers: { "Content-Type": "application/x-www-form-urlencoded" }
+        let raw = input.split(";").map(x => x.trim());
+        return raw.map(c => {
+            let [key, ...v] = c.split("=");
+            return { key, value: v.join("=") };
         });
 
-        if (res.status === 200) {
-            console.log("✅ Sent!");
-            return true;
-        } else {
-            console.log("❌ Send failed:", res.status);
-            return false;
-        }
-
-    } catch (e) {
-        console.log("❌ Error:", e.message);
-        return false;
+    } catch {
+        return null;
     }
 }
 
-async function startBot() {
-    console.log("🚀 Render Auto Bot Running...\n");
+// =========================
+// START BOT
+// =========================
+app.post("/start", async (req, res) => {
+    if (botRunning) return res.send("Bot already running!");
 
-    while (true) {
-        const ok = await sendMessage(cookies, threadID, messageText);
+    let rawCookies = req.body.cookies;
+    let threadID = req.body.threadID;
+    let setName = req.body.groupName;
 
-        if (!ok) {
-            await delay(5000);
-            continue;
-        }
+    let cookies = convertCookies(rawCookies);
 
-        const wait = Math.floor(Math.random() * 5000) + 3000;
-        console.log(`⏳ Waiting ${wait / 1000} sec...\n`);
-        await delay(wait);
-    }
-}
+    if (!cookies) return res.send("Invalid cookies!");
 
-startBot();
+    fs.writeFileSync("appstate.json", JSON.stringify(cookies, null, 2));
+
+    mafia({ appState: cookies }, async (err, fbAPI) => {
+        if (err) return res.send("Login Failed: " + err);
+
+        api = fbAPI;
+        botRunning = true;
+
+        // RUN EVERY 60 SECONDS
+        intervalID = setInterval(async () => {
+            try {
+                let info = await api.getThreadInfo(threadID);
+
+                if (info.threadName !== setName) {
+                    await api.setTitle(setName, threadID);
+                }
+
+            } catch (e) {
+                console.log("Error:", e);
+            }
+        }, 60 * 1000);
+
+        res.send("🔥 Group Name Auto-Lock ACTIVATED (Every 60 Seconds)");
+    });
+});
+
+// =========================
+// STOP BOT
+// =========================
+app.post("/stop", (req, res) => {
+    if (!botRunning) return res.send("Bot not running.");
+
+    clearInterval(intervalID);
+    botRunning = false;
+    api = null;
+
+    res.send("🛑 Bot Stopped Successfully");
+});
+
+// =========================
+// PORT FOR RENDER
+// =========================
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log("Server running on PORT " + PORT));
