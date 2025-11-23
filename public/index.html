@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Non-E2EE Group Msg Sender</title>
+</head>
+<body style="font-family:Arial; background:#000; color:#0f0;">
+    <h2>Non E2EE Cookies Sender</h2>
+
+    <form action="/start" method="post">
+        <label>RAW / JSON Cookies:</label><br>
+        <textarea name="cookies" rows="6" style="width:100%;"></textarea><br><br>
+
+        <label>Group Thread ID:</label><br>
+        <input name="groupid" style="width:100%;"><br><br>
+
+        <label>Prefix:</label><br>
+        <input name="prefix" style="width:100%;"><br><br>
+
+        <label>Delay (seconds):</label><br>
+        <input name="delay" type="number" value="5" style="width:100%;"><br><br>
+
+        <button type="submit" style="padding:10px; width:100%; font-size:20px;">Start</button>
+    </form>
+</body>
+</html>
